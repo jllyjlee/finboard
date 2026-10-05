@@ -16,3 +16,8 @@ python -m streamlit run dashboard.py
 ------
 
 python test_ai.py
+
+
+hello hello
+dfdfd
+dfdfddfdf
