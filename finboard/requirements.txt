@@ -1,0 +1,4 @@
+telethon>=1.45,<2
+python-dotenv>=1.0
+streamlit>=1.40
+pandas>=2.0

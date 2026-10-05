@@ -1,0 +1,18 @@
+#recall last n days of message
+
+python3 -m venv .venv
+
+source .venv/bin/activate
+
+python -m pip install -r requirements.txt
+
+python collector.py backfill --days 3
+
+source .venv-dashboard/bin/activate
+python -m pip install streamlit pandas
+python -m streamlit run dashboard.py
+
+
+------
+
+python test_ai.py
