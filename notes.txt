@@ -1,0 +1,7 @@
+# code to upload/update
+git add .
+git commit -m "Update login page"
+git push
+
+# code to retrieve
+git pull
