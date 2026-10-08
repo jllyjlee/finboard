@@ -4,7 +4,13 @@ import sqlite3
 from pathlib import Path
 from datetime import datetime, timezone
 
-DB_PATH = Path("data/telegram.db")
+from dotenv import load_dotenv
+
+BASE_DIR = Path(__file__).resolve().parent
+DB_PATH = BASE_DIR / "data" / "telegram.db"
+ENV_PATH = BASE_DIR / ".env"
+
+load_dotenv(ENV_PATH)
 
 
 def get_connection() -> sqlite3.Connection:
@@ -32,11 +38,18 @@ def init_db() -> None:
                 has_media INTEGER NOT NULL DEFAULT 0,
                 media_type TEXT,
                 first_url TEXT,
+                shared_urls_json TEXT,
                 collected_at_utc TEXT NOT NULL,
                 UNIQUE(chat_id, telegram_message_id)
             )
             """
         )
+
+        message_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(messages)")
+        }
+        if "shared_urls_json" not in message_columns:
+            conn.execute("ALTER TABLE messages ADD COLUMN shared_urls_json TEXT")
 
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_messages_date_kst "
@@ -66,9 +79,10 @@ def save_message(record: dict) -> bool:
                 has_media,
                 media_type,
                 first_url,
+                shared_urls_json,
                 collected_at_utc
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record["chat_id"],
@@ -83,7 +97,24 @@ def save_message(record: dict) -> bool:
                 int(record.get("has_media", False)),
                 record.get("media_type"),
                 record.get("first_url"),
+                record.get("shared_urls_json"),
                 datetime.now(timezone.utc).isoformat(),
             ),
         )
-        return cur.rowcount == 1
+        inserted = cur.rowcount == 1
+        shared_urls = record.get("shared_urls_json")
+        if not inserted and shared_urls and shared_urls != "[]":
+            conn.execute(
+                """
+                UPDATE messages
+                SET shared_urls_json = ?, first_url = COALESCE(first_url, ?)
+                WHERE chat_id = ? AND telegram_message_id = ?
+                """,
+                (
+                    shared_urls,
+                    record.get("first_url"),
+                    record["chat_id"],
+                    record["telegram_message_id"],
+                ),
+            )
+        return inserted

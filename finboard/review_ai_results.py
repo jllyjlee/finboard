@@ -1,9 +1,12 @@
 import sqlite3
 import json
+from pathlib import Path
 
 
-DB_PATH = "data/telegram.db"
+BASE_DIR = Path(__file__).resolve().parent
+DB_PATH = BASE_DIR / "data" / "telegram.db"
 
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 conn = sqlite3.connect(DB_PATH)
 conn.row_factory = sqlite3.Row
 

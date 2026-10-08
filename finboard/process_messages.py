@@ -1,15 +1,26 @@
+import argparse
 import sqlite3
 import json
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
 from dotenv import load_dotenv
+from openai import OpenAIError
+from pydantic import ValidationError
+
+
+BASE_DIR = Path(__file__).resolve().parent
+ENV_PATH = BASE_DIR / ".env"
+DB_PATH = BASE_DIR / "data" / "telegram.db"
 
 
 # ---------------------------------------------------------
 # Load environment variables
 # ---------------------------------------------------------
 
-load_dotenv()
+load_dotenv(ENV_PATH)
 
 
 # ---------------------------------------------------------
@@ -23,23 +34,42 @@ from ai.relevance import analyze_message_with_usage
 # Configuration
 # ---------------------------------------------------------
 
-DB_PATH = "data/telegram.db"
-
 MODEL_NAME = "gpt-5.6-luna"
 
 # GPT-5.6 Luna pricing per 1 million tokens
 INPUT_PRICE_PER_MILLION = 0.20
 OUTPUT_PRICE_PER_MILLION = 1.20
 
-# IMPORTANT:
-# During development, only process 100 messages.
-LIMIT = 100
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Analyse unprocessed Telegram messages in a bounded date range."
+    )
+    parser.add_argument(
+        "--days",
+        type=int,
+        required=True,
+        help="Only process messages from the last N days (required to control API usage).",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        required=True,
+        help="Maximum messages to analyse (required to control API usage).",
+    )
+    args = parser.parse_args()
+    if args.days < 1 or args.limit < 1:
+        parser.error("--days and --limit must be positive integers.")
+    return args
+
+
+args = parse_args()
 
 
 # ---------------------------------------------------------
 # Connect to database
 # ---------------------------------------------------------
 
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 conn = sqlite3.connect(DB_PATH)
 
 # Allows us to access columns like:
@@ -106,6 +136,10 @@ columns_to_add = {
     "output_tokens": "INTEGER",
     "total_tokens": "INTEGER",
     "estimated_cost_usd": "REAL",
+    "news_field": "TEXT",
+    "summary_ko": "TEXT",
+    "summary_en": "TEXT",
+    "event_date_kst": "TEXT",
 }
 
 
@@ -144,14 +178,23 @@ LEFT JOIN ai_message_analysis AS a
     ON a.message_id = m.id
 
 WHERE
-    a.message_id IS NULL
+    (
+        a.message_id IS NULL
+        OR COALESCE(TRIM(a.news_field), '') = ''
+        OR COALESCE(TRIM(a.summary_ko), '') = ''
+        OR COALESCE(TRIM(a.summary_en), '') = ''
+    )
     AND m.text IS NOT NULL
     AND TRIM(m.text) != ''
+    AND m.message_date_kst >= ?
 
 ORDER BY m.id ASC
 
 LIMIT ?
-""", (LIMIT,)).fetchall()
+""", (
+    (datetime.now(ZoneInfo("Asia/Seoul")) - timedelta(days=args.days)).isoformat(),
+    args.limit,
+)).fetchall()
 
 
 print()
@@ -264,8 +307,12 @@ INSERT INTO ai_message_analysis (
     relevance_score,
 
     category,
+    news_field,
     event_type,
     information_status,
+    summary_ko,
+    summary_en,
+    event_date_kst,
 
     entities_json,
 
@@ -282,7 +329,26 @@ INSERT INTO ai_message_analysis (
 
 )
 
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(message_id) DO UPDATE SET
+    relevant = excluded.relevant,
+    relevance_score = excluded.relevance_score,
+    category = excluded.category,
+    news_field = excluded.news_field,
+    event_type = excluded.event_type,
+    information_status = excluded.information_status,
+    summary_ko = excluded.summary_ko,
+    summary_en = excluded.summary_en,
+    event_date_kst = excluded.event_date_kst,
+    entities_json = excluded.entities_json,
+    needs_review = excluded.needs_review,
+    model = excluded.model,
+    processed_at_utc = excluded.processed_at_utc,
+    input_tokens = COALESCE(ai_message_analysis.input_tokens, 0) + excluded.input_tokens,
+    cached_input_tokens = COALESCE(ai_message_analysis.cached_input_tokens, 0) + excluded.cached_input_tokens,
+    output_tokens = COALESCE(ai_message_analysis.output_tokens, 0) + excluded.output_tokens,
+    total_tokens = COALESCE(ai_message_analysis.total_tokens, 0) + excluded.total_tokens,
+    estimated_cost_usd = COALESCE(ai_message_analysis.estimated_cost_usd, 0) + excluded.estimated_cost_usd
 """, (
 
     message_id,
@@ -291,8 +357,12 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     result.relevance_score,
 
     result.category,
+    result.news_field,
     result.event_type,
     result.information_status,
+    result.summary_ko,
+    result.summary_en,
+    result.event_date_kst,
 
     entities_json,
 
@@ -394,7 +464,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     f"Estimated cost:      ${estimated_cost_usd:.6f}"
                 )
 
-    except Exception as e:
+    except (OpenAIError, ValidationError) as e:
 
         error_count += 1
 
@@ -421,6 +491,7 @@ print("=" * 70)
 
 print(f"Successful: {success_count}")
 print(f"Errors:     {error_count}")
+print(f"Requested date window: last {args.days} day(s), at most {args.limit} messages")
 
 print()
 print("RUN TOKEN USAGE")
@@ -452,3 +523,6 @@ if success_count > 0:
         f"Average cost/message: "
         f"${run_cost_usd / success_count:.6f}"
     )
+
+if error_count:
+    raise SystemExit(1)

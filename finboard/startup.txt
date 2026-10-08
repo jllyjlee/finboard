@@ -1,23 +1,29 @@
-#recall last n days of message
+# Run from the finboard directory.
 
 python3 -m venv .venv
-
 source .venv/bin/activate
-
 python -m pip install -r requirements.txt
 
-python collector.py backfill --days 3
+# Create your private credentials file, then edit it with values from my.telegram.org.
+cp -n .env.example .env
+# Fill TELEGRAM_API_ID, TELEGRAM_API_HASH, and TELEGRAM_PHONE in .env.
+# First collector login uses the separate finboard_personal session.
 
-source .venv-dashboard/bin/activate
-python -m pip install streamlit pandas
+# Collect Telegram posts.
+python collector.py backfill --days 3
+# New collection runs save all report/advisory links shared in each post.
+# Re-running a backfill can fill in links for previously collected posts.
+
+# Import public news and the configured ICS calendar (no AI tokens).
+python sync_news.py --days <N>
+python sync_calendar.py --days <N>
+
+# AI requests are separate. Choose the time window and limit before running.
+python process_messages.py --days <N> --limit <N>
+python process_news.py --days <N> --limit <N>
+
+# Open the dashboard; this does not make AI requests.
 python -m streamlit run dashboard.py
 
-
-------
-
-python test_ai.py
-
-
-hello hello
-dfdfd
-dfdfddfdf
+# Run offline/local tests.
+python -m pytest -q

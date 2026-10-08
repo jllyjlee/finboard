@@ -19,6 +19,7 @@ URL_RE = re.compile(r"https?://\S+")
 
 BASE_DIR = Path(__file__).resolve().parent
 SESSION_DIR = BASE_DIR / "sessions"
+SESSION_NAME = "finboard_personal"
 CHANNELS_FILE = BASE_DIR / "channels.json"
 
 
@@ -70,7 +71,22 @@ def first_url(text: str | None) -> str | None:
     if not text:
         return None
     match = URL_RE.search(text)
-    return match.group(0).rstrip(").,]}>") if match else None
+    return clean_url(match.group(0)) if match else None
+
+
+def clean_url(url: str) -> str:
+    return url.rstrip(").,]}>;")
+
+
+def message_urls(message) -> list[str]:
+    urls = []
+    for match in URL_RE.finditer(message.raw_text or ""):
+        urls.append(clean_url(match.group(0)))
+    for entity in getattr(message, "entities", None) or ():
+        linked_url = getattr(entity, "url", None)
+        if linked_url:
+            urls.append(clean_url(linked_url))
+    return list(dict.fromkeys(url for url in urls if url))
 
 
 def message_to_record(message, chat_id: int, channel_name: str) -> dict:
@@ -80,6 +96,7 @@ def message_to_record(message, chat_id: int, channel_name: str) -> dict:
 
     dt_kst = dt_utc.astimezone(KST)
     media_type = type(message.media).__name__ if message.media else None
+    urls = message_urls(message)
 
     return {
         "chat_id": int(chat_id),
@@ -97,7 +114,8 @@ def message_to_record(message, chat_id: int, channel_name: str) -> dict:
         ),
         "has_media": bool(message.media),
         "media_type": media_type,
-        "first_url": first_url(message.raw_text),
+        "first_url": urls[0] if urls else None,
+        "shared_urls_json": json.dumps(urls, ensure_ascii=False),
     }
 
 
@@ -189,7 +207,7 @@ async def main_async(args):
     api_id, api_hash, phone = load_settings()
     configured = load_channels()
 
-    session_path = SESSION_DIR / "finance_dashboard"
+    session_path = SESSION_DIR / SESSION_NAME
     client = TelegramClient(str(session_path), api_id, api_hash)
 
     # First run: Telethon will ask for the Telegram login code in the VS Code terminal.

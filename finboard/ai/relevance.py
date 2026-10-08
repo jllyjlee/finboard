@@ -1,8 +1,24 @@
+import os
 from typing import Literal
+
 from pydantic import BaseModel, Field
 from openai import OpenAI
 
-client = OpenAI()
+client = None
+
+
+def get_client() -> OpenAI:
+    global client
+
+    if client is None:
+        api_key = os.getenv("OPENAI_API_KEY") or os.getenv("OPENAI_ADMIN_KEY")
+        if not api_key:
+            raise RuntimeError(
+                "Missing OpenAI credentials. Set OPENAI_API_KEY before calling the AI analyzer."
+            )
+        client = OpenAI(api_key=api_key)
+
+    return client
 
 
 # 1. Define allowed entity types
@@ -64,6 +80,20 @@ Category = Literal[
     "other",
 ]
 
+NewsField = Literal[
+    "business_finance",
+    "economy",
+    "politics",
+    "healthcare",
+    "ai_technology",
+    "science",
+    "sports",
+    "geopolitics",
+    "energy_commodities",
+    "crypto",
+    "other",
+]
+
 
 class MessageAnalysis(BaseModel):
     relevant: bool
@@ -74,12 +104,16 @@ class MessageAnalysis(BaseModel):
     )
 
     category: Category
+    news_field: NewsField
     event_type: str
     information_status: InformationStatus
 
     entities: list[FinancialEntity]
 
     needs_review: bool
+    summary_ko: str
+    summary_en: str
+    event_date_kst: str | None
 
 
 SYSTEM_PROMPT = """
@@ -91,6 +125,8 @@ Determine whether each message contains information relevant to financial
 markets, investing, companies, securities, macroeconomics, commodities,
 currencies, cryptocurrencies, regulation, earnings, corporate events,
 industry developments, or other potentially market-relevant developments.
+Also classify the message into the most suitable general news field, even
+when it is not directly finance-related.
 
 Rules:
 
@@ -139,6 +175,20 @@ Rules:
     analysis,
     unknown.
 
+11. news_field must be exactly one of:
+    business_finance, economy, politics, healthcare, ai_technology,
+    science, sports, geopolitics, energy_commodities, crypto, other.
+
+12. Write a concise, factual summary of no more than two short sentences in
+    both Korean and English. Translate faithfully when the source is in one
+    language. Do not add facts or investment advice. If the source is too
+    unclear to summarize, say so briefly in both languages.
+
+13. event_date_kst is only for a specific, explicitly stated current or
+    upcoming event date. Return YYYY-MM-DD in Korea Standard Time if the
+    date can be determined from the message; otherwise return null. Never
+    infer a date from when the message was posted.
+
 Return only the structured schema requested.
 """
 
@@ -146,8 +196,7 @@ Return only the structured schema requested.
 # 4. Put the API function underneath
 
 def analyze_message(text: str) -> MessageAnalysis:
-
-    response = client.responses.parse(
+    response = get_client().responses.parse(
         model="gpt-5.6-luna",
 
         input=[
@@ -166,9 +215,9 @@ def analyze_message(text: str) -> MessageAnalysis:
 
     return response.output_parsed
 
-def analyze_message_with_usage(text: str):
 
-    response = client.responses.parse(
+def analyze_message_with_usage(text: str):
+    response = get_client().responses.parse(
         model="gpt-5.6-luna",
         input=[
             {

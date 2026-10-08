@@ -1,4 +1,8 @@
 telethon>=1.45,<2
 python-dotenv>=1.0
-streamlit>=1.40
+streamlit>=1.50
 pandas>=2.0
+openai>=1.0
+pydantic>=2.0
+yfinance>=0.2.54,<1
+icalendar>=6.1,<7

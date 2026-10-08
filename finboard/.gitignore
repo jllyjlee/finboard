@@ -1,0 +1,10 @@
+.env
+.env.*
+!.env.example
+*.session
+sessions/
+data/*.db
+__pycache__/
+*.py[cod]
+.venv/
+exports/
